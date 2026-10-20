@@ -14,14 +14,26 @@ Step inventory:
        sources, no fab outputs.
     2. Assert HI-7 (capability_mode_ref present on every envelope; canonical
        analysis/capability_mode.json exists with a stable run_id).
-    3. Build review plan (build_review_plan.py).
-    4. Dispatch design_context + reviewer subagents — manual step on this
-       runner; this script prints the dispatch instructions and waits for the
-       output JSONs.
-    5. Merge annotations + assert HI-3 (strip-LLM byte-identical) + summarize
-       _merge_report.json contents.
-    6. Dual-mode summarize_findings (raw vs merged) — proves the renderer
+    3. Build review plan (build_review_plan.py): an optional design_context
+       task plus one deep_review_domain task per catalog domain (8 by
+       default — see prompts/domain_checklists.json). Asserts every expected
+       domain task is present in the emitted plan and prints per-task
+       dispatch instructions. Dispatch itself stays a MANUAL step on this
+       runner — no nested Claude process, no subprocess or agent-API call
+       for any task; an interactive Claude Code session (or equivalent
+       interactive agent) reads review_plan.json and performs the work.
+       This script does not run that workflow for you.
+    4. Merge annotations + assert HI-3 (strip-LLM byte-identical) + summarize
+       _merge_report.json contents. Requires analysis/review_annotations.json
+       to already exist (produced manually, same contract as before).
+    5. Dual-mode summarize_findings (raw vs merged) — proves the renderer
        contract holds and the --only-deterministic flag picks raw paths.
+
+Note: domain-task outputs (analysis/deep_review/<domain>.json) and their
+central merge into analysis/deep_review.json + deep_review_gate.py run are
+NOT part of this exercise's step inventory — they are a separate, central
+step performed once by whoever orchestrates the full review, per
+prompts/domain_task.md. This runner only builds and validates the plan.
 """
 from __future__ import annotations
 
@@ -34,6 +46,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "phase4-review"
 ANALYZER_NAMES = ("schematic", "pcb", "thermal", "emc", "cross_analysis")
+# Mirrors skills/kicad/review/prompts/domain_checklists.json (catalog order).
+# Kept as a literal tuple rather than imported so this runner can assert the
+# plan's shape without importing build_review_plan.py's module-level state.
+EXPECTED_DOMAIN_IDS = (
+    "rf", "ethernet", "modem", "mcu_memory", "power", "io", "interfaces",
+    "board_emc",
+)
 
 
 def _run(cmd, cwd=None):
@@ -146,7 +165,18 @@ def step_2_assert_capability_mode(fixture_dir: Path):
 
 
 def step_3_build_review_plan(fixture_dir: Path):
-    """Build the 2-task review plan."""
+    """Build the review plan (design_context + one deep_review_domain task
+    per catalog domain), assert every expected domain task is present, and
+    print per-task dispatch instructions.
+
+    This function does not dispatch anything itself: it never spawns a
+    subprocess, invokes the Claude CLI, or calls an agent API for any task
+    in the plan — there is no nested Claude process. Dispatch is a MANUAL
+    step on this runner, same as before; an interactive Claude Code session
+    (or equivalent interactive agent) reads review_plan.json and performs
+    the work. Calling this function does NOT run the full multi-domain
+    review workflow — it only builds and validates the plan.
+    """
     print("\n[step 3] Build review plan")
     analysis_dir = fixture_dir / "analysis"
     plan_path = analysis_dir / "review_plan.json"
@@ -154,10 +184,52 @@ def step_3_build_review_plan(fixture_dir: Path):
           "--analysis-dir", str(analysis_dir),
           "--output", str(plan_path)])
     print(f"  plan written: {plan_path}")
-    print("[step 3] OK — dispatch design_context per "
-          "skills/datasheets/references/dispatch-claude-code.md Phase 4 addendum")
-    print("  Expected output from the dispatch (v2.0: reviewer task retired, spec §5):")
-    print(f"    {analysis_dir / 'design_context.json'}")
+
+    plan = json.loads(plan_path.read_text())
+    task_ids = {t["task_id"] for t in plan.get("tasks", [])}
+    expected_domain_task_ids = {f"domain_{d}" for d in EXPECTED_DOMAIN_IDS}
+    missing_domains = expected_domain_task_ids - task_ids
+    if missing_domains:
+        raise AssertionError(
+            f"review_plan.json is missing expected domain task(s): "
+            f"{sorted(missing_domains)}")
+    if "design_context" not in task_ids:
+        raise AssertionError(
+            "review_plan.json is missing the design_context task")
+
+    print(f"  {len(task_ids)} tasks: design_context + "
+          f"{len(expected_domain_task_ids)} deep_review_domain tasks")
+    for domain_id in EXPECTED_DOMAIN_IDS:
+        print(f"    - domain_{domain_id}")
+
+    print("[step 3] OK — plan built and validated; dispatch remains a MANUAL "
+          "step on this runner (see skills/datasheets/references/"
+          "dispatch-claude-code.md Phase 4 addendum for the design_context "
+          "dispatch convention). Nothing above spawned a subprocess, "
+          "invoked the Claude CLI, or called an agent API for any plan "
+          "task — no nested Claude process. Dispatch instructions for an "
+          "interactive Claude Code session (or equivalent interactive "
+          "agent):")
+    print(f"    1. Read {plan_path} and work through its tasks[] list.")
+    print("    2. design_context task -> "
+          "skills/kicad/review/prompts/design_context.md")
+    print("    3. Each domain_<id> task -> "
+          "skills/kicad/review/prompts/domain_task.md, scoped per that "
+          "task's own domain/checklist/input_artifacts/notes fields. "
+          "notes is emphasis only — it never narrows a domain's scope "
+          "(see prompts/domain_task.md -> 'Scope discipline').")
+    print("  Expected outputs from that dispatch:")
+    print(f"    {analysis_dir / 'design_context.json'}  (design_context task)")
+    print(f"    {analysis_dir / 'deep_review'}/<domain>.json  "
+          "(bare findings[] array per domain task — NOT written directly "
+          "to analysis/deep_review.json)")
+    print("  Central merge + gate (performed once, by whoever orchestrates "
+          "the full review — NOT by this runner): concatenate every "
+          "analysis/deep_review/<domain>.json findings[] array into one "
+          "analysis/deep_review.json document, then run deep_review_gate.py "
+          "once centrally (see prompts/domain_task.md).")
+    print("  This exercise still waits on analysis/review_annotations.json "
+          "before step 4 (merge_annotations.py) — unchanged from before.")
 
 
 def step_4_merge_and_assert_invariants(fixture_dir: Path):

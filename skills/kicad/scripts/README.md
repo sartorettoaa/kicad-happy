@@ -24,6 +24,11 @@ This directory contains the core analysis scripts, shared utilities, the S-expre
 | `diff_analysis.py` | two analyzer JSONs | ~950 LOC | Diff-aware design comparison (component/signal/EMC/SPICE) |
 | `what_if.py` | analyzer JSON + patch spec | ~1,500 LOC | Parameter sweep + automated fix suggestions (inverse solvers with E-series snapping) |
 | `summarize_findings.py` | analysis/manifest.json | ~200 LOC | Cross-run severity × count rollup |
+| `kicad_cli_review.py` | schematic/PCB paths | ~400 LOC | Ground-truth ERC/DRC/netlist via real `kicad-cli` (`--refill-zones`, `--schematic-parity`); every step is best-effort and degrades to a note, never an exception |
+| `board_facts.py` | `.kicad_pcb` | ~560 LOC | Raw-file stackup (multi-ply dielectric summation, implausible epsilon_r/tan-delta) and net-assigned graphic copper (`gr_*`/`fp_*`) facts `analyze_pcb.py` misses |
+| `analyzer_triage.py` | findings JSON + evidence context | ~280 LOC | Tags analyzer findings `real`/`likely_fp`/`review` against kicad-cli DRC and board_facts evidence — never discards or reorders a finding |
+
+Sibling standalone package (not part of this `scripts/` directory, documented in `../SKILL.md` instead): `../toolkit/` — a separate, stdlib-first query layer (`python -m skills.kicad.toolkit <command>`) over a fresh parse of the raw `.kicad_pcb` file, independent of the analyzer/triage pipeline above.
 
 Detailed methodology documentation for each analyzer:
 - `methodology_schematic.md` — parsing pipeline, net building, component classification, detector inventory
@@ -174,6 +179,76 @@ python3 analyze_gerbers.py ./gerbers/                    # JSON to stdout
 python3 analyze_gerbers.py ./gerbers/ --output out.json  # JSON to file
 python3 analyze_gerbers.py ./gerbers/ --compact          # Minified JSON
 ```
+
+---
+
+## kicad_cli_review.py
+
+Runs real `kicad-cli` ERC/DRC/netlist export as ground truth the Python analyzers can disagree with — a DRC with 0 unconnected / 0 schematic-parity issues rules out a whole class of "unrouted" analyzer claims, and real violations surface as findings with `analysis_source: "kicad"`.
+
+### Usage
+
+```bash
+python3 kicad_cli_review.py --pcb board.kicad_pcb --output-dir ./out
+python3 kicad_cli_review.py --schematic proj.kicad_sch --pcb board.kicad_pcb --output-dir ./out
+python3 kicad_cli_review.py --schematic proj.kicad_sch --output-dir ./out --output result.json
+```
+
+### Behavior
+
+- **Discovery** (`find_kicad_cli()`): `KICAD_CLI_PATH` env override, then PATH, then per-OS standard install dirs, then — on non-macOS/Windows with `flatpak` present — `flatpak run --command=kicad-cli org.kicad.KiCad` as a last resort (not validated up front; a missing Flatpak app still degrades to a note at run time).
+- `--schematic` runs `sch erc --format json --severity-all` plus a `sch export netlist --format kicadsexpr` dump. `--pcb` runs `pcb drc --format json --severity-all --units mm`, with `--refill-zones` by default (disable with `--no-refill-zones`) and `--schematic-parity` automatically added when both files are given.
+- Findings get `rule_id` prefixes `ERC-*` / `DRC-*` / `DRC-unconnected` / `DRC-parity-*`, `confidence: "deterministic"`; KiCad-excluded (designer-waived) violations are kept but downgraded to `info` rather than dropped.
+- `summarize()` produces ground-truth counts (`drc_geometric`, `drc_unconnected`, `drc_parity`, `erc_violations`, ...) for `analyzer_triage.py` to consume as `drc_summary`.
+
+### Limitations
+
+- **Every step is best-effort.** A missing kicad-cli, a timed-out command (`--timeout`, default 900s — zone refill on a dense 6-layer board takes minutes), or a failed invocation degrades to a note in `notes[]`, never an exception. **A skipped or failed run is a review gap, not a passing result** — never report "DRC clean" when `kicad_cli.command_prefix` is null or a step failed.
+- **Read-only by design**: every command's working directory is `output_dir` (never the project directory), and DRC never passes `--save-board` — nothing is ever written back into the schematic/PCB project folder.
+- `NON_GEOMETRIC_DRC` violation types (library/footprint/annotation bookkeeping, silkscreen text rules) are excluded from the `drc_geometric` count by design — a 0 there does not mean 0 DRC violations of every kind, only 0 geometric ones.
+
+---
+
+## board_facts.py
+
+Two blind spots of the kicad-happy analyzers, found on real reviews, read straight from the raw `.kicad_pcb` S-expression tree:
+
+- **Stackup**: KiCad 10 stores multi-ply dielectrics as one `(layer "dielectric N" ...)` node with bare `addsublayer` markers between plies; `analyze_pcb.py`'s `extract_setup()` assigns scalar keys onto one flat dict so the last ply silently overwrites earlier ones, producing a wrong dielectric height (and every impedance number derived from it). It also flags implausible/unset stackup-wizard placeholders (`epsilon_r < 2.0`, `loss_tangent <= 0.0001`).
+- **Graphic copper**: traces (commonly RF) drawn as `gr_line`/`gr_arc`/`gr_poly` on a copper layer with a net assigned, instead of real tracks — the analyzers' track/via walk ignores them, so those nets look short or "unrouted" (RT-001) even though they conduct and KiCad DRC sees them as connected. `footprint_copper()` does the same for `fp_*` shapes inside footprints (printed antennas, net-ties), attributing each shape to the pad net it touches.
+
+### Usage
+
+```bash
+python board_facts.py --pcb board.kicad_pcb
+python board_facts.py --pcb board.kicad_pcb --output board_facts.json
+```
+
+Library usage: `from board_facts import collect_board_facts, facts_to_dict, facts_markdown`. Emits its own findings (`BF-STACKUP-ER`, `BF-STACKUP-TAND`, `BF-STACKUP-MULTIPLY`, `BF-GRAPHIC-COPPER`, `BF-UNNETTED-COPPER`, `BF-FP-COPPER-ORPHAN`) plus a `graphic_copper`/`stackup_multi_ply` shape `analyzer_triage.py` consumes directly as triage context.
+
+### Limitations
+
+Pure functions over the parsed PCB S-expression tree only — it is a narrow patch for the two blind spots above, not a general re-analysis: it does not cross-reference the schematic, compute impedance itself, or run any geometric overlap/clearance checks. A malformed/missing file degrades to a single warning in `stackup_warnings`, never an exception.
+
+---
+
+## analyzer_triage.py
+
+Tags each analyzer finding with a `real`/`likely_fp`/`review` verdict (plus a recorded reason) so a review report can separate the handful of real issues from bounding-box keepout heuristics, mousebite/fiducial placement notes, and multi-ply stackup parsing artifacts. Pure functions over plain dicts — no dependency on any particular analyzer's internal types.
+
+### Usage
+
+```bash
+python3 analyzer_triage.py --findings pcb.json --context context.json
+python3 analyzer_triage.py --findings pcb.json --output triaged.json
+```
+
+`--findings` accepts either a full analyzer JSON (reads its top-level `findings[]`) or a bare `findings[]` array. `--context` is a JSON object matching `TriageContext.from_dict()` (`drc_summary`, `graphic_copper_nets`, `stackup_multi_ply`, `mousebite_refs`) — typically built from `kicad_cli_review.py`'s `summary` and `board_facts.py`'s `graphic_copper`/`stackup_multi_ply` output.
+
+### Limitations
+
+- Only 5 rule IDs have a dedicated rule today (`KO-001`, `RT-001`, `SU-001`, `PM-001`, `PM-002`); every other `rule_id` defaults to `real` unmodified — the absence of a rule means "not evaluated by this script," not "confirmed real."
+- Without `--context` (or an empty one), every rule falls back to `review` or no verdict at all — the script cannot manufacture a false-positive judgement from the finding alone; it needs real DRC/board-facts evidence to downgrade anything. A bounding-box heuristic alone (e.g. KO-001's keepout test) is never sufficient evidence for a `likely_fp` downgrade.
+- Never discards or reorders findings: `triage_findings()` returns exactly one annotated copy per input finding, in the same order. Every `likely_fp` downgrade keeps the pre-downgrade severity in `original_severity` and drops `severity` to `info` — the original value is never lost.
 
 ---
 

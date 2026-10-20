@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "deep_review_synthesis",
+  "description": "Synthesis artifact for a gated Deep Review run: a human-/agent-authored roll-up of durable `deep_review.json` findings (schema_version 1.0) into a verdict, prioritized risks, confirmed-good checks, explicit gaps, and cross-finding contradictions. Validated by normalize_deep_review.py's `validate-synthesis` subcommand via _mini_jsonschema (keyword subset - no $ref/anyOf/pattern), which also cross-checks every `finding_id` reference against the gated deep_review.json `findings[]` array. The validator is read-only: it never rewrites this artifact.",
+  "type": "object",
+  "required": ["schema_version", "produced_for_run_id", "produced_at", "verdict", "top_risks", "verified_ok", "not_checked", "contradictions"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "produced_for_run_id": {"type": "string", "minLength": 1, "description": "Must match the deep_review.json run this synthesis was produced from."},
+    "produced_at": {"type": "string", "format": "date-time"},
+    "verdict": {
+      "type": "object",
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"enum": ["ready", "needs_review", "blocked"]},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "top_risks": {
+      "type": "array",
+      "description": "Prioritized risks; each must cite the durable finding it comes from.",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "reason"],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "verified_ok": {
+      "type": "array",
+      "description": "Checks confirmed correct. finding_id is optional -- some confirmations aren't tied to one specific finding (e.g. 'decoupling placement checked board-wide').",
+      "items": {
+        "type": "object",
+        "required": ["note"],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "note": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "not_checked": {
+      "type": "array",
+      "description": "Explicit gaps -- never a silent omission. finding_id is optional for the same reason as verified_ok.",
+      "items": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "contradictions": {
+      "type": "array",
+      "description": "Pairs/groups of durable findings whose claims conflict; both/all sides must be cited.",
+      "items": {
+        "type": "object",
+        "required": ["finding_ids", "description"],
+        "properties": {
+          "finding_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+          "description": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
