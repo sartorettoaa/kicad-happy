@@ -6,7 +6,7 @@ module's own contract: pure functions over plain dicts.
 
 Run with:
     python3 -m unittest discover -s skills/kicad/scripts/tests -v
-    python3 skills/kicad/scripts/tests/test_analyzer_triage.py
+    python3 skills/kicad/scripts/tests/test_analyzer_triage_package.py
 """
 
 import json

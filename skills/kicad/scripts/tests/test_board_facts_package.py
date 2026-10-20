@@ -7,7 +7,7 @@ the tests also exercise the real KiCad 10 ``addsublayer`` multi-ply format.
 
 Run with:
     python3 -m unittest discover -s skills/kicad/scripts/tests -v
-    python3 skills/kicad/scripts/tests/test_board_facts.py
+    python3 skills/kicad/scripts/tests/test_board_facts_package.py
 """
 
 import os
