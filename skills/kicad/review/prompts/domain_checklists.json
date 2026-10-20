@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "description": "Domain checklist catalog consumed by build_review_plan.py. Each entry seeds one Deep Review domain task: a starting-point checklist (derived from skills/kicad/references/deep-review.md comparison heuristics and skills/kicad/references/report-generation.md domain focus areas), the analyzer artifacts the pass should read, and a suggested finding-category prefix. Checklists are starting points, not ceilings -- the methodology reference governs when the two disagree.",
+  "domains": [
+    {
+      "id": "rf",
+      "title": "RF / Wireless Front-End",
+      "category_hint": "rf",
+      "input_artifacts": ["schematic.json", "pcb.json"],
+      "checklist": [
+        "Trace the RF chain through switches, LNAs, mixers, filters, and PAs; confirm each stage's pin functions match the traced topology.",
+        "Verify matching network component values against the transceiver/module's app-circuit for the actual board antenna and target frequency/impedance (50 ohm unless documented otherwise).",
+        "Check decoupling tiering (bulk + bypass + HF) on every RF supply pin against the datasheet.",
+        "Confirm the reference clock/oscillator source, accuracy, and distribution to the RF IC.",
+        "Verify ground plane continuity and RF return path under the chain; flag splits or vias crossing the RF trace.",
+        "Check antenna keepout: a DRC-enforced keepout zone, not just currently-absent copper (a future zone refill could add copper silently).",
+        "Cross-check the analyzer's RF chain / RF matching network findings against the raw schematic before trusting them."
+      ]
+    },
+    {
+      "id": "ethernet",
+      "title": "Ethernet / Wired Networking",
+      "category_hint": "ethernet",
+      "input_artifacts": ["schematic.json", "pcb.json"],
+      "checklist": [
+        "Trace the PHY-to-magnetics-to-connector path (the analyzer's BFS tracing) and confirm differential pair polarity/pairing is correct.",
+        "Verify differential pair length-match delta against the protocol's tolerance (100BASE-TX/1000BASE-T) -- compute the delta and cite the spec, not just the raw lengths.",
+        "Check magnetics (integrated or discrete) center-tap bias resistor/capacitor values against the PHY datasheet.",
+        "Confirm Bob Smith termination / common-mode choke presence on unshielded connectors.",
+        "Check the PHY supply decoupling and reference (RBIAS) resistor value against the datasheet.",
+        "Verify MDI/MDI-X handling (auto-MDIX vs fixed) matches the intended use.",
+        "Check chassis-ground vs signal-ground isolation at the connector (ESD/surge path)."
+      ]
+    },
+    {
+      "id": "modem",
+      "title": "Cellular / Wi-Fi / BLE / LoRa Modem & Module",
+      "category_hint": "modem",
+      "input_artifacts": ["schematic.json", "pcb.json"],
+      "checklist": [
+        "Verify module supply rail voltage and peak TX-burst current against the datasheet; check for adequate bulk capacitance and its placement.",
+        "Confirm the antenna matching/pi-network values against the module's app note for the board's actual antenna, not the module's reference antenna.",
+        "Check UART/USB/SPI host-interface voltage levels and handshake lines against the host MCU's supply domain.",
+        "Verify the SIM/eSIM interface (if present): supply, reset, clock, and ESD protection.",
+        "Check RF trace length, ground continuity, and keepout around the module and antenna per the module's layout guide.",
+        "Confirm enable/reset/wake sequencing timing against the module's power-up/power-down state machine."
+      ]
+    },
+    {
+      "id": "mcu_memory",
+      "title": "MCU Core & Memory Interfaces",
+      "category_hint": "mcu_memory",
+      "input_artifacts": ["schematic.json"],
+      "checklist": [
+        "Verify per-domain decoupling (core, I/O, analog) against the datasheet's placement/value requirements.",
+        "Check crystal load-cap math (CL = (C1xC2)/(C1+C2) + Cstray) against the crystal's spec and the MCU's drive level.",
+        "Verify boot-strap pull direction against the intended boot source and the datasheet's boot-pin table.",
+        "Check the reset circuit (RC / supervisor) against the MCU's reset threshold and timing spec.",
+        "For external flash/QSPI/eMMC/DRAM: verify supply sequencing relative to the MCU, bus voltage-level compatibility, and series/termination resistors against the datasheet.",
+        "Confirm the debug interface (SWD/JTAG) pull resistors and voltage domain match the MCU and the debug probe.",
+        "Check 5V-tolerance: any MCU pin fed from a higher-voltage domain than its own supply."
+      ]
+    },
+    {
+      "id": "power",
+      "title": "Power Tree & Regulation",
+      "category_hint": "power",
+      "input_artifacts": ["schematic.json", "thermal.json"],
+      "checklist": [
+        "Recompute each regulator's Vout from the FB divider and the datasheet Vref (not the analyzer's heuristic) and compare against the rail name and downstream requirement.",
+        "Verify Vin range (worst case, not nominal -- include supply tolerance and transients) against the regulator's absolute max and recommended operating range.",
+        "Check required externals (inductance floor, input/output caps with DC-bias derating, bootstrap/feed-forward caps) against datasheet minimums.",
+        "Verify enable/power-good pull-up voltage domains and sequencing (core-before-IO, PG chaining) against the full power tree.",
+        "Sum worst-case load per shared rail against the regulator's rated current, including inrush.",
+        "Check thermal: Pdiss = (Vin-Vout)xIout (linears) or efficiency-derived (switchers) against Rth_JA x Pdiss + Tambient vs Tj_max."
+      ]
+    },
+    {
+      "id": "io",
+      "title": "General I/O & Sensors",
+      "category_hint": "io",
+      "input_artifacts": ["schematic.json", "cross_analysis.json"],
+      "checklist": [
+        "Verify floating digital inputs have a defined pull-up/pull-down or are explicitly marked no-connect.",
+        "Check the ADC/DAC reference voltage chain and anti-aliasing filter against the signal's expected frequency/amplitude.",
+        "Verify sensor interrupt lines, bus clustering, and address/CS assignment don't conflict.",
+        "Check LED/relay/opto driver current limiting and flyback/snubber protection against the datasheet.",
+        "Verify connector current-per-pin against the actual load (cross-reference cross_analysis.json CC-001).",
+        "Check ESD protection coverage on user-facing/external I/O pins."
+      ]
+    },
+    {
+      "id": "interfaces",
+      "title": "Communication Interfaces & Buses",
+      "category_hint": "interfaces",
+      "input_artifacts": ["schematic.json"],
+      "checklist": [
+        "For each bus (I2C/SPI/UART/CAN/RS-485/USB/HDMI/display-touch): verify both ends' logic thresholds against the shared rail (VIH of the reader vs VOH of the driver) and pull-up ownership/value (watch for parallel pull-ups on a shared net).",
+        "Check bus speed against the slowest device's rating and trace length/termination requirements.",
+        "Verify level shifters (IC-based or discrete) map correctly to each side's supply domain.",
+        "Check USB compliance: series resistors, pull-ups for the declared speed, VBUS tolerance of PHY pins.",
+        "Verify isolation barriers (if present) maintain creepage/clearance and don't bridge grounds.",
+        "Check display/touch controller interface timing and supply sequencing against its datasheet."
+      ]
+    },
+    {
+      "id": "board_emc",
+      "title": "Board-Level EMC & Layout",
+      "category_hint": "board_emc",
+      "input_artifacts": ["schematic.json", "pcb.json", "emc.json"],
+      "checklist": [
+        "Review analyze_emc.py findings (ground plane integrity, decoupling, switching harmonics, PDN impedance, diff-pair skew, ESD paths) and triage each against the raw layout -- the analyzer is a starting point, not the final word.",
+        "Check ground plane continuity under high-dv/dt and high-frequency traces; flag splits or return-path discontinuities.",
+        "Verify switching regulator loop area and the proximity of input/output caps to the IC.",
+        "Check stitching-via density around layer transitions and board edges.",
+        "Verify filter component placement (ferrites, common-mode chokes) relative to the noise source and the protected domain.",
+        "Check connector/cable shield grounding and chassis-vs-signal ground separation."
+      ]
+    }
+  ]
+}

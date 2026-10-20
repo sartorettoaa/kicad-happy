@@ -85,6 +85,36 @@ jobs:
       - name: datasheet_verify v1.4 cache round-trip smoke
         run: python3 skills/datasheets/scripts/_smoke_v14_roundtrip.py
 
+      - name: KiCad review utility tests
+        run: |
+          python3 -m unittest skills.kicad.review.scripts.test_build_review_plan -v
+          python3 -m unittest skills.kicad.review.scripts.test_normalize_deep_review -v
+          python3 -m unittest skills.kicad.review.scripts.test_score_review -v
+          python3 -m unittest skills.kicad.review.scripts.test_run_phase4_exercise -v
+
+      - name: Static report renderer tests
+        run: python3 -m unittest discover -s skills/kicad/review/tests -p "test_*.py" -v
+
+      - name: KiCad script tests
+        run: |
+          python3 -m unittest discover -s skills/kicad/scripts/tests -p "test_*.py" -v
+          python3 -m unittest skills.kicad.scripts.test_board_facts -v
+          python3 -m unittest skills.kicad.scripts.test_analyzer_triage -v
+          python3 -m unittest skills.kicad.scripts.test_kicad_cli_review -v
+
+      - name: KiCad toolkit tests
+        run: |
+          python3 -m unittest skills.kicad.toolkit.test_geometry -v
+          python3 -m unittest skills.kicad.toolkit.test_model -v
+          python3 -m unittest skills.kicad.toolkit.test_queries -v
+          python3 -m unittest skills.kicad.toolkit.test_deps -v
+          python3 -m unittest skills.kicad.toolkit.test_cli -v
+
+      - name: Datasheet adapter and coverage tests
+        run: |
+          python3 -m unittest skills.datasheets.scripts.test_fetch_datasheet_vibe -v
+          python3 -m unittest skills.datasheets.scripts.test_review_coverage -v
+
   harness-smoke:
     runs-on: ubuntu-latest
 

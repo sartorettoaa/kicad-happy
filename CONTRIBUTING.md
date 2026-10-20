@@ -53,9 +53,13 @@ Each skill has a `SKILL.md` with YAML frontmatter (name, description, triggers) 
 
 ### Zero-dependency policy
 
-All analysis scripts use Python 3.10+ standard library only. No pip install, no Docker, no KiCad installation needed. This is a hard requirement — it means the scripts run anywhere with a Python interpreter.
+Core analysis scripts use Python 3.10+ standard library only. No pip install, no Docker, no KiCad installation needed for the analyzers. This is a hard requirement — it means the scripts run anywhere with a Python interpreter.
 
-Optional dependencies (`requests`, `playwright`, `pdftotext`) are only used for datasheet downloading and web-scraping / PDF-text-extraction fallbacks. They are never imported by the core analysis path.
+Optional dependencies (`requests`, `playwright`, `pdftotext`) are only used for datasheet downloading and web-scraping / PDF-text-extraction fallbacks. They are never imported by the core analysis path. Optional review compute tools may offer geometry/field-solver extras, but must remain separately installable, must never auto-install dependencies, and must clearly report when unavailable.
+
+### Interactive deep review
+
+Review scripts prepare/read evidence and validate outputs; they must not spawn a nested Claude process or hide model calls in a service. The active coding-agent session owns delegation, user checkpoints and synthesis. Preserve immutable raw analyzer output, place generated review artifacts under the active analysis run, and use `skills/kicad/review/schemas/deep_review.schema.json` plus `deep_review_gate.py` as the canonical evidence contract. Missing source material is a visible verification gap, never a reason to refute a claim by default. Do not commit project-specific benchmark data, board files, datasheets, or credentials.
 
 ## How signal detectors work
 

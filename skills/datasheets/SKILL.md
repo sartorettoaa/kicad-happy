@@ -1,6 +1,6 @@
 ---
 name: datasheets
-description: Extract structured specifications from electronic component datasheet PDFs — pinouts, electrical characteristics, peripherals, topology, and features. Cache extractions per project for consumption by schematic and PCB analyzers. Primary consumer infrastructure for `kicad`, `emc`, `spice`, and `thermal` analyzers. Use this skill whenever the user asks to extract, verify, or read specs from a component datasheet; when analyzers need verified IC knowledge (EN pin thresholds, PG presence, USB peripheral speed); or when a review mentions datasheet coverage, extraction quality, or per-MPN specifications. Also triggers on "extract this datasheet", "what are the specs for MPN X", "verify datasheet extraction", or "check pin functions for part Y".
+description: Extract structured specifications from electronic component datasheet PDFs — pinouts, electrical characteristics, peripherals, topology, and features. Cache extractions per project for consumption by schematic and PCB analyzers. Primary consumer infrastructure for `kicad`, `emc`, `spice`, and `thermal` analyzers. Use this skill whenever the user asks to extract, verify, or read specs from a component datasheet; when analyzers need verified IC knowledge (EN pin thresholds, PG presence, USB peripheral speed); or when a review mentions datasheet coverage, extraction quality, or per-MPN specifications. Also triggers on Vibe catalog PDF fetches and coverage-roster creation, "extract this datasheet", "what are the specs for MPN X", "verify datasheet extraction", or "check pin functions for part Y".
 ---
 
 # Datasheets Skill
@@ -9,7 +9,7 @@ description: Extract structured specifications from electronic component datashe
 
 | Skill | Relationship |
 |-------|--------------|
-| `digikey` / `mouser` / `lcsc` / `element14` | **Producers** — download the PDFs under `<project>/datasheets/` that this skill extracts from |
+| `digikey` / `mouser` / `lcsc` / `element14` / optional Vibe adapter | **Producers** — download PDFs under `<project>/datasheets/` that this skill extracts from |
 | `kicad` | **Primary consumer** — VM-001/PU-001/FS-001/PP-001/LR-001/XT-001 + Phase 4b lookup detectors (AM-001/OV-001/TJ-001/FT-001/EX-001) query extractions via `lookup(mpn)` for verified-IC knowledge |
 | `emc` | **Consumer** — switching-frequency, package-Rθ_JA, and operating-voltage data sharpen EMC heuristics |
 | `spice` | **Consumer** — SPICE model presence + IBIS data feed simulation-readiness checks |
@@ -34,7 +34,7 @@ This skill owns:
 
 ## Non-goals
 
-- **No PDF downloading.** That is owned by distributor skills (`digikey`, `mouser`, `lcsc`, `element14`).
+- **No generic PDF downloading.** Distributor skills (`digikey`, `mouser`, `lcsc`, `element14`) own their sources. The optional Vibe catalog adapter under `scripts/fetch_datasheet_vibe.py` is a PDF producer only; this skill still owns extraction, validation and trusted cache semantics.
 - **No global library.** Each project's extractions live in `<project>/datasheets/extracted/`. There is no shared cross-project cache.
 
 ## Cache location
@@ -67,7 +67,44 @@ This skill owns:
 - `scripts/datasheet_features.py` — v1.3 consumer helper API (dual-reads v1.4 caches via `_derive_*_v14` translators)
 - `scripts/plan_extraction.py` — **v1.4** orchestration plan generator (Phase 3 extraction pipeline)
 - `scripts/merge_results.py` — **v1.4** per-task result validator + merger
+- `scripts/review_coverage.py` — standalone deterministic datasheet coverage roster builder (candidates/missing/excluded) from `kicad` analyzer JSON artifacts; not wired into the extraction pipeline or any other script — run manually, see "Coverage roster" below
 - `datasheet_types/` — **v1.4** typed access layer package (`DatasheetFacts`, `SpecValue`, `Pin`, `Pinout`, `lookup`, `best`, `trusted`, `has_data`)
+
+## Coverage roster (review_coverage.py)
+
+Standalone sibling of `datasheet_lookup.py` / `plan_extraction.py` — not wired into the Vibe pipeline, the extraction workflow, or any other script in this skill. Run it manually, against the current review run's `kicad` analyzer JSON (`analyze_schematic.py`/`analyze_pcb.py` output, read via its `components[]` with a `bom[]` fallback), to build the deterministic MPN coverage roster described in `kicad/SKILL.md` → "Datasheet Acquisition". Save the output as `analysis/review_coverage.json` when following the Deep Review prompt contract below:
+
+```bash
+python3 skills/datasheets/scripts/review_coverage.py schematic.json [pcb.json ...] --output datasheet_roster.json
+```
+
+Every component read from the input artifact(s) lands in exactly one of three buckets, so bucket sizes always sum to the total component count:
+- `candidates` — real MPN present, in a datasheet-warranted class (IC, transistor/switch, transformer/magnetics, crystal/oscillator, connector, protection diode/TVS, inductor/ferrite bead, antenna/RF module, supercap/battery, switch/relay)
+- `missing` — relevant class, no MPN field at all (a coverage gap, recorded rather than dropped)
+- `excluded` — DNP, a mechanical/fiducial/testpoint reference, or a placeholder MPN token (`TBD`/`NA`/`-`/...)
+
+Run it **before** dispatching any MPN fetch (distributor sync scripts or `fetch_datasheet_vibe.py` below) so the fetch list comes from the roster's `candidates`, not an ad-hoc scan, and keep the output roster JSON as an inventory artifact in the review's evidence set. For the Deep Review prompt contract use `analysis/review_coverage.json`; pass that file to the fetcher with `--roster`.
+
+**Limitations:** Pure stdlib, read-only, no network — it only classifies components already present in the analyzer JSON; it does not fetch, extract, or score anything itself. It is not automatically invoked by any other script in this skill or by the `kicad` workflow — the calling agent must run it explicitly at the right point in the review.
+
+## Datasheet sources
+
+Vibe is an optional catalog PDF source; it returns files, not structured extraction facts. For each requested MPN, the fetcher queries the component inventory, downloads all listed datasheets and all listed docs whose `filename` ends in `.pdf` (case-insensitive), regardless of document type, and writes identity-named PDFs in the datasheets output directory. The detailed JSON results manifest is separate at `datasheets/vibe/manifest.json`. The fetcher makes GET requests only; it does not call mutating endpoints. Do not infer API fields or endpoints beyond the implemented contract. Set `TRACTIAN_DATASHEET_API_KEY` in the process environment or enter it at the CLI's hidden `getpass` prompt; either way, the key is transient, used for that run, and never stored by the fetcher. `TRACTIAN_DATASHEET_BASE_URL` is an optional HTTPS override. Never put API credentials in `.kicad-happy.json`, any tracked config file, prompts, or reports. Send manufacturer part numbers only — never schematic/PCB files, refs, net names, or project data.
+
+Fetch explicit MPNs, or use the coverage-roster contract (`--roster` and `--dry-run`) to preview or fetch only candidate MPNs:
+
+```bash
+# Explicit MPNs
+python3 skills/datasheets/scripts/fetch_datasheet_vibe.py --output datasheets MPN1 MPN2
+
+# Preview roster candidates without network access, filesystem writes, or an API key
+python3 skills/datasheets/scripts/fetch_datasheet_vibe.py --roster analysis/review_coverage.json --output datasheets --dry-run --json
+
+# Fetch only candidates listed in the coverage roster
+python3 skills/datasheets/scripts/fetch_datasheet_vibe.py --roster analysis/review_coverage.json --output datasheets --json
+```
+
+With `--roster`, only `candidates[*].mpn` values are selected; other roster buckets are not fetched. A dry run is offline and write-free, and shows remote asset counts as unknown because it does not query the component inventory; only a complete local inventory could supply those counts. The fetcher queries inventory even if an older single `<MPN>.pdf` exists. A PDF being available or cached does not mean it has been verified or extracted; PDFs from every source still need the normal extraction pipeline and quality gate before analyzer consumers can treat facts as trusted.
 
 ## Extraction workflow
 

@@ -346,11 +346,26 @@ Pre-compliance test plan:
 
 Datasheets flow through kicad-happy in two stages:
 
-**Sync (download).** Pulls PDFs for every component with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. 96% success rate across 240+ manufacturers. Each PDF is verified against the expected part number.
+**Sync (download).** Pulls PDFs for components with an MPN from DigiKey, LCSC, element14, or Mouser into a local `datasheets/` directory. The optional Vibe fetcher queries the component inventory for each requested MPN, downloads all listed datasheets and listed documents whose filename ends in `.pdf` (case-insensitive), and writes identity-named PDFs plus a separate `datasheets/vibe/manifest.json`. It uses GET requests only and makes no mutating calls. Set `TRACTIAN_DATASHEET_API_KEY` in the process environment, or enter it at the CLI's hidden `getpass` prompt; the key is transient and is never stored. PDF availability is not datasheet extraction or verification.
 
-**Extract (parse).** The **datasheets** skill turns those PDFs into structured JSON — pinouts, voltage ratings, electrical characteristics, peripherals, topology, SPICE model coefficients. Extractions are cached per-MPN under `<project>/datasheets/extracted/` and scored on a five-dimension quality rubric. Analyzer skills (`kicad`, `emc`, `spice`, `thermal`) consume the cache through a shared helper API with trust gates — so a schematic finding tagged `confidence: datasheet-backed` means a scored extraction produced the underlying fact, not a keyword match on the part number.
+For a full design review, create `analysis/review_coverage.json` with `skills/datasheets/scripts/review_coverage.py` before fetching. Preview Vibe fetches without network access, filesystem writes, or an API key using `python3 skills/datasheets/scripts/fetch_datasheet_vibe.py --roster analysis/review_coverage.json --output datasheets --dry-run --json`; omit `--dry-run` to fetch only `candidates[*].mpn`. Dry-run asset counts are unknown unless a complete local inventory is available. The roster is a standalone coverage artifact, not part of the extraction pipeline.
 
-For the full pipeline — page selection, the quality rubric, the consumer API, and what it deliberately doesn't do — see **[Datasheet Extraction Guide](datasheet-extraction.md)**.
+**Extract (parse).** The **datasheets** skill turns available PDFs into structured JSON — pinouts, voltage ratings, electrical characteristics, peripherals, topology, SPICE model coefficients. Extractions are cached per-MPN under `<project>/datasheets/extracted/` and quality-scored. Analyzer skills (`kicad`, `emc`, `spice`, `thermal`) consume the cache through a shared helper API with trust gates; a fetched PDF or cache hit is not itself a verified fact.
+
+For the full extraction pipeline — page selection, the quality rubric, the consumer API, and what it deliberately doesn't do — see **[Datasheet Extraction Guide](datasheet-extraction.md)**.
+
+## Static Deep Review report
+
+The Deep Review report renderer is a standalone, static Python CLI; it turns existing analysis artifacts into Markdown and can optionally produce a self-contained HTML triage view. From the repository root:
+
+```bash
+python3 skills/kicad/review/scripts/render_report.py --analysis-dir analysis/
+python3 skills/kicad/review/scripts/render_report.py --analysis-dir analysis/ --html
+```
+
+By default, reports are written inside the analysis directory. `--output` and `--html-output` override destinations; `--stdout` also prints Markdown. The renderer reads available review/analyzer artifacts and lists missing or malformed inputs as gaps. It does not run analyzers, the evidence gate, or verification; rendering a report, finding a PDF, or having an artifact/tool available does not verify a design claim. Keep evidence-gate and reviewer states distinct from availability, and treat skipped or missing evidence as a review gap. The HTML output is a local static view, not a verification service.
+
+When reporting model usage, include only input tokens, output tokens, cache-read tokens, cache-write tokens, and elapsed duration — do not include currency or estimated cost. Credentials may be injected through process environment variables; never commit credentials. The secret-store mechanism is undecided.
 
 ## 📋 BOM management — from schematic to order
 

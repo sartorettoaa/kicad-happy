@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeepReviewExecutionMetrics",
+  "description": "Optional interactive-session token and elapsed-time measurements. Null means not recorded; no monetary fields are defined.",
+  "type": "object",
+  "required": ["schema_version", "produced_for_run_id", "produced_at", "agents", "totals"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "produced_for_run_id": {"type": "string", "minLength": 1},
+    "produced_at": {"type": "string", "minLength": 1, "format": "date-time"},
+    "model": {"type": "string"},
+    "agents": {
+      "type": "array",
+      "items": {"type": "object", "required": ["domain"], "additionalProperties": true,
+        "properties": {
+          "domain": {"type": "string"},
+          "status": {"type": "string"},
+          "summary": {"type": "string"},
+          "input_tokens": {"type": "integer"},
+          "output_tokens": {"type": "integer"},
+          "cache_read_tokens": {"type": "integer"},
+          "cache_write_tokens": {"type": "integer"},
+          "duration_seconds": {"type": "number"}
+        }}
+    },
+    "totals": {"type": "object", "additionalProperties": true,
+      "properties": {
+        "input_tokens": {"type": "integer"},
+        "output_tokens": {"type": "integer"},
+        "cache_read_tokens": {"type": "integer"},
+        "cache_write_tokens": {"type": "integer"},
+        "duration_seconds": {"type": "number"}
+      }}
+  }
+}
